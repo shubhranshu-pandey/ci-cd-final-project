@@ -6,61 +6,77 @@ spec:
   params:
     - name: IMAGE
       type: string
-      description: Reference of the image buildah will produce
+      description: The image reference buildah will produce
       default: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/ci-cd-app:latest
+
   workspaces:
     - name: output
 
   tasks:
+    - name: cleanup
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: output
+
     - name: git-clone
       taskRef:
         name: git-clone
         kind: ClusterTask
       params:
         - name: url
-          value: https://github.com/shubhranshu-pandey/ci-cd-final-project
+          value: "https://github.com/shubhranshu-pandey/ci-cd-final-project"
+        - name: deleteExisting
+          value: "true"
       workspaces:
         - name: output
           workspace: output
+      runAfter:
+        - cleanup
 
     - name: flake8
       taskRef:
         name: flake8
-      runAfter:
-        - git-clone
       workspaces:
         - name: source
           workspace: output
+      runAfter:
+        - git-clone
 
     - name: nose
       taskRef:
         name: nose
-      runAfter:
-        - flake8
       workspaces:
         - name: source
           workspace: output
+      runAfter:
+        - flake8
 
-    - name: buildah
+    - name: build-image
       taskRef:
         name: buildah
         kind: ClusterTask
       params:
         - name: IMAGE
           value: $(params.IMAGE)
-        - name: FORMAT
-          value: docker
-      runAfter:
-        - nose
+        - name: CONTEXT
+          value: .
+        - name: DOCKERFILE
+          value: ./Dockerfile
+        - name: STORAGE_DRIVER
+          value: vfs
       workspaces:
         - name: source
           workspace: output
+      runAfter:
+        - nose
 
     - name: deploy
       taskRef:
         name: deploy
-      runAfter:
-        - buildah
       workspaces:
         - name: source
           workspace: output
+      runAfter:
+        - build-image
