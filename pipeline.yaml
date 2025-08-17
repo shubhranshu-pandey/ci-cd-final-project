@@ -1,0 +1,74 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ci-cd-pipeline
+spec:
+  params:
+    - name: IMAGE
+      type: string
+      description: Image to build and deploy
+  workspaces:
+    - name: output
+  tasks:
+    - name: cleanup
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      runAfter:
+        - cleanup
+      workspaces:
+        - name: output
+          workspace: output
+      params:
+        - name: url
+          value: https://github.com/shubhranshu-pandey/ci-cd-final-project
+        - name: revision
+          value: main
+        - name: deleteExisting
+          value: "true"
+
+    - name: lint
+      taskRef:
+        name: lint
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: test
+      taskRef:
+        name: nose
+      runAfter:
+        - lint
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: build
+      taskRef:
+        name: buildah
+      runAfter:
+        - test
+      workspaces:
+        - name: source
+          workspace: output
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+
+    - name: deploy
+      taskRef:
+        name: deploy
+      runAfter:
+        - build
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
